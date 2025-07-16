@@ -1,0 +1,14 @@
+kuberneteControlPlanes:
+  hosts:
+    controlle-kuberneteControlPlane01:
+      ansible_host: homelab
+
+kuberneteWorkers:
+    hosts:
+      kuberneteWorker01:
+        ansible_host: homelab-worker
+
+homelab:
+  children:
+  kuberneteControlPlanes:
+  kuberneteWorkers:
