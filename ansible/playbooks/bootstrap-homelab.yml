@@ -1,0 +1,110 @@
+- name: Bootstrap Homelab Playbook
+  hosts: kubernetesCluster
+  # gather_facts: no
+
+  tasks:
+    - name: Ensure swap is off
+      command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+    
+    - name: Comment out swap entries in /etc/fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\s+swap\s+)'
+        replace: '#\1'
+
+    - name: Remove default swapfile if it exists
+      file:
+        path: /swapfile
+        state: absent
+
+    - name: Make sure docker is installed
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+        
+    - name: Ensure apt-transport-https is installed
+      ansible.builtin.apt:
+        name: apt-transport-https
+        state: present
+        update_cache: yes
+
+    - name: Check if keyrings directory already exists
+      ansible.builtin.stat:
+        path: /etc/apt/keyrings/
+      register: keyring_dir
+
+    - name: Ensure keyring directory exists
+      command: mkdir -p -m 755 /etc/apt/keyrings
+      when: not keyring_dir.stat.exists
+    
+    - name: Backup existing Kubernetes APT key if present
+      ansible.builtin.copy:
+        src: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        dest: /etc/apt/keyrings/k8s-apt-keyring.gpg.bak
+        remote_src: true
+        force: true
+      when: ansible_facts['os_family'] == 'Ubuntu' and ansible.builtin.stat(path='/etc/apt/keyrings/kubernetes-apt-keyring.gpg').stat.exists 
+
+    # - name: Dow6nload and install Kubernetes GPG key
+    #   # Temporat to fix the 403 error
+    #   # See here https://github.com/cri-o/cri-o/issues/9341
+    #   command: curl -fsSL https://download.opensuse.org/repositories/isv:/cri-o:/stable:/v1.33/deb/Release.key | gpg --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    #   become: true
+
+    # curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key 
+    # curl -- -L https://pkgs.k8s.io/core:/stable:/v1.28/deb/InRelease
+
+    - name: Check if Kubernetes keyring already exists
+      ansible.builtin.stat:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      register: kubernetes_keyring
+
+    - name: Download and install Kubernetes APT GPG key if not present
+      ansible.builtin.shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key   | gpg --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      when:
+        # - ansible_facts['os_family'] == 'Debian'
+        - not kubernetes_keyring.stat.exists
+
+    - name: Set permissions for Kubernetes APT keyring
+      # allow unprivileged APT programs to read this keyring
+      command: chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg 
+
+    - name: Check if Kubernetes source list exists
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/kubernetes.list
+      register: kubernetes_source_list_exists
+
+    - name: Add kubernetes source list if not exists.
+      ansible.builtin.shell: |
+       echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+      when: not kubernetes_source_list_exists.stat.exists
+    
+    - name: Set permissions for Kubernetes sources list
+      command: chmod 644 /etc/apt/sources.list.d/kubernetes.list   # helps tools such as command-not-found to work correctly
+    
+    - name: Ensure kubeadm is installed
+      ansible.builtin.apt:
+        name: kubeadm
+        state: present
+        update_cache: yes
+
+    - name: Ensure kubelet is installed
+      ansible.builtin.apt:
+        name: kubelet
+        state: present
+        update_cache: yes
+
+    - name: Ensure kubectl is installed
+      ansible.builtin.apt:
+        name: kubectl
+        state: present
+        update_cache: yes
+
+    - name: Ensure kubernetes-cni is installed
+      ansible.builtin.apt:
+        name: kubernetes-cni
+        state: present
+        update_cache: yes
