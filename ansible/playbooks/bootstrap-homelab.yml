@@ -108,3 +108,62 @@
         name: kubernetes-cni
         state: present
         update_cache: yes
+
+    - name: Check if kube-apiserver manifest exists (init already done)
+      stat:
+        path: /etc/kubernetes/manifests/kube-apiserver.yaml
+      register: kubeadm_init_check
+
+    - name: Initialize Kubernetes control plane if not already initialized
+      shell: kubeadm init 
+      when: not kubeadm_init_check.stat.exists and inventory_hostname in groups['kubernetesControlPlanes']
+
+    - name: Print inventory host name
+      debug:
+        msg: "{{ inventory_hostname  in groups['kubernetesControlPlanes'] }}"
+
+    - name: Get join command from control plane
+      ansible.builtin.shell: |
+        kubeadm token create --print-join-command
+      register: join_command_output 
+      when: inventory_hostname in groups['kubernetesControlPlanes'][0]
+
+    - name: Set fact on control plane for join command
+      set_fact:
+        kube_join_cmd: "{{ join_command_output.stdout }}"
+      when: inventory_hostname in groups['kubernetesControlPlanes'][0]
+
+    - name: Check if worker is already joined
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: worker_joined
+      when: inventory_hostname in groups['kubernetesWorkers']
+
+    - name: Run join command on worker node
+      shell: "{{ hostvars[groups['kubernetesControlPlanes'][0]]['kube_join_cmd'] }}"
+      when: 
+        - inventory_hostname in groups['kubernetesWorkers']
+        - not worker_joined.stat.exists     
+
+    - name: Ensure .kube directory exists on control plane
+      file:
+        path: "{{ ansible_env.HOME }}/.kube"
+        state: directory
+        mode: '0755'
+      # runs as the target user 
+      become: false  
+      when:
+      - inventory_hostname in groups['kubernetesControlPlanes'] 
+
+    - name: Copy Kubernetes admin.conf to user kube config on control plane
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ ansible_env.HOME }}/.kube/config"
+        remote_src: true
+        # owner: "{{ ansible_user }}"
+        # group: "{{ ansible_user }}"
+        mode: '0644'
+      when:
+      - inventory_hostname in groups['kubernetesControlPlanes'] 
+
+    
